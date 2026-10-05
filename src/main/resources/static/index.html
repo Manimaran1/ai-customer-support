@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AI Customer Support</title>
+    <style>
+        body {
+            font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 0 16px;
+            color: #222;
+        }
+        h1 { margin-bottom: 4px; }
+        .subtitle { color: #666; margin-top: 0; }
+        label { display: block; margin-top: 12px; font-weight: 600; }
+        input, textarea {
+            width: 100%; padding: 8px; font-size: 14px;
+            border: 1px solid #ccc; border-radius: 6px;
+            box-sizing: border-box;
+        }
+        button {
+            margin-top: 12px; padding: 10px 20px; font-size: 15px;
+            background: #0078d4; color: white; border: none;
+            border-radius: 6px; cursor: pointer;
+        }
+        button:hover { background: #005fa3; }
+        button:disabled { background: #999; cursor: not-allowed; }
+        #answer {
+            margin-top: 20px; padding: 16px; background: #f7f7f8;
+            border-radius: 8px; white-space: pre-wrap; line-height: 1.5;
+            min-height: 80px; font-size: 15px;
+        }
+        #status { color: #666; font-size: 13px; margin-top: 6px; }
+    </style>
+</head>
+<body>
+<h1>AI Customer Support</h1>
+<p class="subtitle">RAG + MCP powered assistant</p>
+
+<label>Customer ID</label>
+<input id="customerId" value="123" />
+
+<label>Transaction ID (optional)</label>
+<input id="transactionId" value="TXN-456" />
+
+<label>Question</label>
+<textarea id="question" rows="3">Why was my payment declined yesterday?</textarea>
+
+<button id="askBtn" onclick="ask()">Ask</button>
+<div id="status"></div>
+
+<h3>Answer</h3>
+<div id="answer"></div>
+
+<script>
+    async function ask() {
+        const btn = document.getElementById('askBtn');
+        const answerEl = document.getElementById('answer');
+        const statusEl = document.getElementById('status');
+
+        btn.disabled = true;
+        answerEl.textContent = '';
+        statusEl.textContent = 'Thinking…';
+
+        try {
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    customerId: document.getElementById('customerId').value,
+                    transactionId: document.getElementById('transactionId').value,
+                    question: document.getElementById('question').value
+                })
+            });
+
+            if (!res.ok) {
+                statusEl.textContent = 'Error: ' + res.status + ' ' + res.statusText;
+                btn.disabled = false;
+                return;
+            }
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+
+                // Split on SSE event boundaries (blank line)
+                let idx;
+                while ((idx = buffer.indexOf('\n\n')) !== -1) {
+                    const event = buffer.slice(0, idx);
+                    buffer = buffer.slice(idx + 2);
+                    handleEvent(event, answerEl);
+                }
+            }
+            // Handle any trailing event
+            if (buffer.trim()) handleEvent(buffer, answerEl);
+
+            statusEl.textContent = 'Done.';
+        } catch (err) {
+            statusEl.textContent = 'Error: ' + err.message;
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
+    function handleEvent(event, answerEl) {
+        // SSE event may have multiple lines, e.g.:
+        //   data:Hello
+        //   data:world
+        // We concatenate all "data:" payloads.
+        let payload = '';
+        event.split('\n').forEach(line => {
+            if (line.startsWith('data:')) {
+                payload += line.slice(5);   // remove "data:"
+            }
+        });
+        if (payload) answerEl.textContent += payload;
+    }
+</script>
+</body>
+</html>
